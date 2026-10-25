@@ -12,7 +12,7 @@ The `adn_uart_receiver` is designed for integration into SoC or FPGA designs req
 | 1.0      | 2026-08-06 | Ahasan Ullah Khalid | Stable release                                         |
 
 Author : Ahasan Ullah Khalid (aukhalid02@gmail.com)
-This file is part of ADN-VLSI/adn_endec
+This file is part of adnsemicon/adn_endec
 Copyright (c) 2026 ADN Semiconductors
 Licensed under the MIT License
 See LICENSE file in the project root for full license information

@@ -12,7 +12,7 @@ This module is designed for embedded systems and FPGA-based designs requiring lo
 | 1.0      | 2026-08-06 | Annim Jannat    | Stable release                                         |
 
 Author : Annim Jannat (jannatannim@gmail.com)
-This file is part of ADN-VLSI/adn_endec
+This file is part of adnsemicon/adn_endec
 Copyright (c) 2026 ADN Semiconductors
 Licensed under the MIT License
 See LICENSE file in the project root for full license information

@@ -16,7 +16,7 @@ The `adn_uart_register_interface` acts as the memory-mapped control layer for th
 | 1.0      | 2026-08-16 | Ahasan Ullah Khalid | Stable release                                         |
 
 Author : Ahasan Ullah Khalid (aukhalid02@gmail.com)
-This file is part of ADN-VLSI/adn_uart
+This file is part of adnsemicon/adn_uart
 Copyright (c) 2026 ADN Semiconductors
 Licensed under the MIT License
 See LICENSE file in the project root for full license information
