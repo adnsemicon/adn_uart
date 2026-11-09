@@ -30,6 +30,9 @@ See LICENSE file in the project root for full license information
 
 module adn_uart_transmitter_tb;
 
+  timeunit 1ns;
+  timeprecision 1ps;
+
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // IMPORTS
   //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -38,9 +41,9 @@ module adn_uart_transmitter_tb;
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // LOCALPARAMS
   //////////////////////////////////////////////////////////////////////////////////////////////////
-  localparam int DATA_WIDTH       = 8;
-  localparam int CLK_PERIOD       = 10;                          // ns
-  localparam int BAUD_RATE        = 1_000_000_000 / CLK_PERIOD;  // derived, not hardcoded
+  localparam int DATA_WIDTH = 8;
+  localparam int CLK_PERIOD = 10;  // ns
+  localparam int BAUD_RATE = 1_000_000_000 / CLK_PERIOD;  // derived, not hardcoded
   localparam int NUM_RANDOM_CASES = 20;
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -63,17 +66,65 @@ module adn_uart_transmitter_tb;
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // VARIABLES
   //////////////////////////////////////////////////////////////////////////////////////////////////
-  int    pass_count;
-  int    fail_count;
+  logic [1:0] cov_data_bits;
+  logic       cov_parity_en;
+  logic       cov_parity_type;
+  logic       cov_extra_stop;
+  logic [7:0] cov_data;
+
+  int         pass_count;
+  int         fail_count;
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // INTERFACES
   //////////////////////////////////////////////////////////////////////////////////////////////////
-  adn_uart_if uart_if();
+  adn_uart_if uart_if ();
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // CLASSES
   //////////////////////////////////////////////////////////////////////////////////////////////////
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////
+  // FUNCTIONAL COVERAGE
+  //////////////////////////////////////////////////////////////////////////////////////////////////
+
+  covergroup uart_tx_cg;
+
+    // Data width
+    cp_data_width: coverpoint cov_data_bits {
+      bins width_5 = {2'd0}; bins width_6 = {2'd1}; bins width_7 = {2'd2}; bins width_8 = {2'd3};
+    }
+
+    // Parity enable
+    cp_parity_en: coverpoint cov_parity_en {
+      bins disabled = {0}; bins enabled = {1};
+    }
+
+    // Parity type: meaningful only when parity is enabled
+    cp_parity_type: coverpoint cov_parity_type iff (cov_parity_en) {
+      bins even = {0}; bins odd = {1};
+    }
+
+    // Stop bit configuration
+    cp_extra_stop: coverpoint cov_extra_stop {
+      bins one_stop = {0}; bins two_stop = {1};
+    }
+
+    // Data patterns
+    cp_data_pattern: coverpoint cov_data {
+      bins all_zero = {8'h00};
+      bins all_one = {8'hFF};
+      bins alternating_01 = {8'h55};
+      bins alternating_10 = {8'hAA};
+      bins other = default;
+    }
+
+    // Configuration cross coverage
+    cx_uart_config: cross cp_data_width, cp_parity_en, cp_parity_type, cp_extra_stop;
+
+  endgroup
+
+  uart_tx_cg uart_cov = new();
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // ASSIGNMENTS
@@ -91,17 +142,28 @@ module adn_uart_transmitter_tb;
   adn_uart_transmitter #(
       .DATA_WIDTH(DATA_WIDTH)
   ) dut (
-      .arst_ni      (arst_ni      ),
-      .clk_i        (clk_i        ),
-      .data_ready_o (data_ready_o ),
-      .data_valid_i (data_valid_i ),
-      .data_i       (data_i       ),
-      .data_bits_i  (data_bits_i  ),
-      .parity_en_i  (parity_en_i  ),
+      .arst_ni      (arst_ni),
+      .clk_i        (clk_i),
+      .data_ready_o (data_ready_o),
+      .data_valid_i (data_valid_i),
+      .data_i       (data_i),
+      .data_bits_i  (data_bits_i),
+      .parity_en_i  (parity_en_i),
       .parity_type_i(parity_type_i),
-      .extra_stop_i (extra_stop_i ),
-      .tx_o         (uart_if.line )
+      .extra_stop_i (extra_stop_i),
+      .tx_o         (uart_if.line)
   );
+
+
+  // //////////////////////////////////////////////////////////////////
+  // // DEBUG MONITOR
+  // //////////////////////////////////////////////////////////////////
+
+  // always @(uart_if.line) begin
+  //   $display("[%0t] TX=%b READY=%b VALID=%b STATE=%0d", $time, uart_if.line, data_ready_o,
+  //            data_valid_i, dut.current_state);
+  // end
+
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // METHODS
@@ -142,28 +204,40 @@ module adn_uart_transmitter_tb;
   endfunction
 
   // Drives one frame's parallel inputs into the DUT
-  task automatic send(input logic [7:0] data, input logic [1:0] dbits_enc,
-                       input logic parity_en, input logic parity_type,
-                       input logic extra_stop);
-    @(posedge clk_i);
-    data_i        <= data;
-    data_bits_i   <= dbits_enc;
-    parity_en_i   <= parity_en;
-    parity_type_i <= parity_type;
-    extra_stop_i  <= extra_stop;
-    data_valid_i  <= 1'b1;
-    do @(posedge clk_i); while (!data_ready_o);
-    data_valid_i <= 1'b0;
+  task automatic send(input logic [7:0] data, input logic [1:0] dbits_enc, input logic parity_en,
+                      input logic parity_type, input logic extra_stop);
+
+    // Drive inputs away from the DUT sampling edge
+    @(negedge clk_i);
+
+    // Wait until transmitter is ready
+    wait (data_ready_o);
+
+    data_i        = data;
+    data_bits_i   = dbits_enc;
+    parity_en_i   = parity_en;
+    parity_type_i = parity_type;
+    extra_stop_i  = extra_stop;
+    data_valid_i  = 1'b1;
+
+    // Hold valid until the DUT accepts the transaction
+    @(negedge clk_i);
+    data_valid_i = 1'b0;
+
   endtask
 
   // Listens on uart_if.line and returns the decoded frame
-  task automatic receive(output int rx_data, output bit rx_parity,
-                          input logic [1:0] dbits_enc, input logic parity_en,
-                          input logic parity_type, input logic extra_stop);
-    int nbits = decode_nbits(dbits_enc);
-    uart_if.recv(rx_data, rx_parity, BAUD_RATE, parity_en, parity_type,
-                 extra_stop, nbits);
+  task automatic receive(output int rx_data, output bit rx_parity, input logic [1:0] dbits_enc,
+                         input logic parity_en, input logic parity_type, input logic extra_stop);
+
+    int nbits;
+
+    nbits = decode_nbits(dbits_enc);
+
+    uart_if.recv(rx_data, rx_parity, BAUD_RATE, parity_en, parity_type, extra_stop, nbits);
+
   endtask
+
 
   // Full check: arms the receiver, drives the frame, compares result.
   // NOTE: masked_exp MUST be an unsigned type (logic [7:0]), not `byte`.
@@ -171,34 +245,74 @@ module adn_uart_transmitter_tb;
   // sign-extend to 32'hFFFFFFA5 when compared against the unsigned `int`
   // rx_data (32'h000000A5), causing a false mismatch at nbits=8.
   task automatic send_and_check(input logic [7:0] exp_data, input logic [1:0] dbits_enc,
-                                 input logic parity_en, input logic parity_type,
-                                 input logic extra_stop, input string tc_name = "");
+                                input logic parity_en, input logic parity_type,
+                                input logic extra_stop, input string tc_name = "");
+
     int         rx_data;
     bit         rx_parity;
-    int         nbits      = decode_nbits(dbits_enc);
-    logic [7:0] masked_exp = exp_data & ((1 << nbits) - 1);
+    int         nbits;
+    logic [7:0] masked_exp;
 
-    // Arm the receiver BEFORE driving valid, so it doesn't miss the start bit
+    nbits           = decode_nbits(dbits_enc);
+
+    masked_exp      = exp_data & ((1 << nbits) - 1);
+
+    //////////////////////////////////////////////////////////////////
+    // FUNCTIONAL COVERAGE SAMPLING
+    //////////////////////////////////////////////////////////////////
+
+    cov_data_bits   = dbits_enc;
+    cov_parity_en   = parity_en;
+    cov_parity_type = parity_type;
+    cov_extra_stop  = extra_stop;
+    cov_data        = exp_data;
+
+    uart_cov.sample();
+
+    //////////////////////////////////////////////////////////////////
+    // START RECEIVER
+    //////////////////////////////////////////////////////////////////
+
     fork
       receive(rx_data, rx_parity, dbits_enc, parity_en, parity_type, extra_stop);
     join_none
+
+    // Allow receiver to enter its start-bit detection
+    #1;
+
+    //////////////////////////////////////////////////////////////////
+    // TRANSMIT
+    //////////////////////////////////////////////////////////////////
 
     send(exp_data, dbits_enc, parity_en, parity_type, extra_stop);
 
     wait fork;
 
+    //////////////////////////////////////////////////////////////////
+    // CHECK RESULT
+    //////////////////////////////////////////////////////////////////
+
     if (rx_data !== masked_exp) begin
-      $error("[%s] Data mismatch: exp=%0h got=%0h (nbits=%0d, par_en=%0b, par_type=%0b, ex_stop=%0b)",
-             tc_name, masked_exp, rx_data, nbits, parity_en, parity_type, extra_stop);
+
+      $error(
+          "[%s] Data mismatch: exp=%0h got=%0h (nbits=%0d, par_en=%0b, par_type=%0b, ex_stop=%0b)",
+          tc_name, masked_exp, rx_data, nbits, parity_en, parity_type, extra_stop);
+
       fail_count++;
       note_case(0);
+
     end else begin
-      $display("[%s] PASS: data=%0h (nbits=%0d, par_en=%0b, par_type=%0b, ex_stop=%0b)",
-                tc_name, rx_data, nbits, parity_en, parity_type, extra_stop);
+
+      $display("[%s] PASS: data=%0h (nbits=%0d, par_en=%0b, par_type=%0b, ex_stop=%0b)", tc_name,
+               rx_data, nbits, parity_en, parity_type, extra_stop);
+
       pass_count++;
       note_case(1);
+
     end
+
   endtask
+
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // TEST CASE TASKS
@@ -266,11 +380,11 @@ module adn_uart_transmitter_tb;
   endtask
 
   task automatic tc_011_randomized_sweep();
-    byte      rand_data;
-    bit [1:0] rand_dbits_enc;
-    bit       rand_parity_en;
-    bit       rand_parity_typ;
-    bit       rand_extra_stop;
+    logic [7:0] rand_data;
+    bit   [1:0] rand_dbits_enc;
+    bit         rand_parity_en;
+    bit         rand_parity_typ;
+    bit         rand_extra_stop;
 
     for (int i = 0; i < NUM_RANDOM_CASES; i++) begin
       rand_data       = $urandom;
@@ -279,9 +393,8 @@ module adn_uart_transmitter_tb;
       rand_parity_typ = $urandom_range(0, 1);
       rand_extra_stop = $urandom_range(0, 1);
 
-      send_and_check(rand_data, rand_dbits_enc, rand_parity_en,
-                      rand_parity_typ, rand_extra_stop,
-                      $sformatf("TC_011_%0d", i));
+      send_and_check(rand_data, rand_dbits_enc, rand_parity_en, rand_parity_typ, rand_extra_stop,
+                     $sformatf("TC_011_%0d", i));
     end
   endtask
 
@@ -356,6 +469,14 @@ module adn_uart_transmitter_tb;
         $finish;
       end
     endcase
+
+    $display("\n======================================");
+    $display("UART FUNCTIONAL COVERAGE");
+    $display("======================================");
+    $display("Coverage: %0.2f%%", uart_cov.get_coverage());
+    $display("PASS COUNT: %0d", pass_count);
+    $display("FAIL COUNT: %0d", fail_count);
+    $display("======================================\n");
 
     $finish;
   end
